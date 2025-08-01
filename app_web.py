@@ -3,7 +3,9 @@ import streamlit as st
 from langchain_openai import OpenAI
 
 # 🔑 Get API key from environment
-api_key = os.getenv("OPENAI_API_KEY")
+import streamlit as st
+api_key = st.secrets["OPENAI_API_KEY"]
+
 if not api_key:
     st.error("⚠️ OPENAI_API_KEY not set. Set it before running.")
     st.stop()
