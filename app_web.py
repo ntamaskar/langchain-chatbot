@@ -1,3 +1,6 @@
+import streamlit as st
+st.write("Secrets keys available:", list(st.secrets.keys()))
+
 import os
 import streamlit as st
 from langchain_openai import OpenAI
