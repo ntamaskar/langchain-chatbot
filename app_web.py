@@ -99,10 +99,11 @@ if uploaded:
                   ("vs_file_count" not in st.session_state) or \
                   (st.session_state.vs_file_count != len(uploaded))
     if needs_index:
-        with st.sidebar.status("Indexing PDFs…", expanded=False):
-            st.session_state.vs = build_index_from_pdfs(uploaded)
-            st.session_state.vs_file_count = len(uploaded)
-            st.sidebar.success(f"Indexed {st.session_state.vs_file_count} file(s) ✅")
+        with st.spinner("Indexing PDFs…"):
+    st.session_state.vs = build_index_from_pdfs(uploaded)
+    st.session_state.vs_file_count = len(uploaded)
+st.sidebar.success(f"Indexed {st.session_state.vs_file_count} file(s) ✅")
+
 
 # ========= Sidebar: Live Web Search =========
 st.sidebar.header("🌐 Live Web")
