@@ -14,7 +14,11 @@ from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
 
 # ========== Config / Version ==========
-APP_VERSION = os.getenv("APP_VERSION", "dev")  # set in Streamlit Secrets > “Environment variables” or leave as "dev"
+from datetime import datetime
+
+APP_VERSION = datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+st.sidebar.markdown(f"**Version:** {APP_VERSION}")
+
 
 # ========== Keys ==========
 API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
