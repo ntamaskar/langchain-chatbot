@@ -26,7 +26,6 @@ except Exception:
 
 
 # ========= App / Version =========
-# Option A (auto): show current UTC timestamp on each run
 APP_VERSION = os.getenv("APP_VERSION") or datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
 # ========= Keys =========
@@ -41,7 +40,7 @@ tavily = TavilyClient(api_key=TAVILY_KEY) if (TAVILY_KEY and TavilyClient) else 
 # ========= Model =========
 chat = ChatOpenAI(
     openai_api_key=API_KEY,
-    model="gpt-3.5-turbo",  # you can swap to "gpt-4o-mini" later
+    model="gpt-3.5-turbo",
     temperature=0.7,
 )
 
@@ -61,7 +60,6 @@ st.markdown("""
 if "history" not in st.session_state:
     st.session_state.history = []  # list[HumanMessage | AIMessage]
 
-# Prompt that can include optional web context
 prompt = ChatPromptTemplate.from_messages([
     ("system",
      "You are a helpful, concise assistant. "
@@ -82,7 +80,6 @@ def build_index_from_pdfs(files):
     splitter = RecursiveCharacterTextSplitter(chunk_size=1000, chunk_overlap=150)
 
     for f in files:
-        # Streamlit allows writing to /tmp in the cloud
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(f.getbuffer())
             tmp_path = tmp.name
@@ -93,18 +90,15 @@ def build_index_from_pdfs(files):
     embeddings = OpenAIEmbeddings(openai_api_key=API_KEY)
     return FAISS.from_documents(chunks, embeddings)
 
-# Build/refresh the vector index when new files are uploaded
 if uploaded:
     needs_index = ("vs" not in st.session_state) or \
                   ("vs_file_count" not in st.session_state) or \
                   (st.session_state.vs_file_count != len(uploaded))
     if needs_index:
-    with st.sidebar.status("Indexing PDFs…", expanded=False):
-        st.session_state.vs = build_index_from_pdfs(uploaded)
-        st.session_state.vs_file_count = len(uploaded)
+        with st.sidebar.status("Indexing PDFs…", expanded=False):
+            st.session_state.vs = build_index_from_pdfs(uploaded)
+            st.session_state.vs_file_count = len(uploaded)
         st.sidebar.success(f"Indexed {st.session_state.vs_file_count} file(s) ✅")
-
-
 
 # ========= Sidebar: Live Web Search =========
 st.sidebar.header("🌐 Live Web")
@@ -113,7 +107,6 @@ if live_search and not tavily:
     st.sidebar.warning("Add TAVILY_API_KEY in Secrets to enable live web search.")
 
 def fetch_web_context(query: str, max_results: int = 5) -> str:
-    """Query Tavily and return a short concatenated context block."""
     if not tavily:
         return ""
     try:
@@ -126,7 +119,6 @@ def fetch_web_context(query: str, max_results: int = 5) -> str:
             if title or snip:
                 snippets.append(f"- {title}\n  {snip}\n  Source: {url}")
         context = "\n".join(snippets)
-        # keep context bounded so prompts stay compact
         return context[:6000]
     except Exception as e:
         st.sidebar.error(f"Web search failed: {e}")
@@ -143,22 +135,18 @@ for msg in st.session_state.history:
 user_input = st.chat_input("Ask me anything…")
 
 if user_input:
-    # Show + store user turn
     st.session_state.history.append(HumanMessage(user_input))
     with st.chat_message("user", avatar="🧑‍💻"):
         st.markdown(user_input)
 
     try:
-        # optional web context
         web_context = fetch_web_context(user_input, max_results=5) if live_search else ""
 
         if use_docs and "vs" in st.session_state:
-            # RAG path: retrieve from the uploaded docs first
             retriever = st.session_state.vs.as_retriever(search_type="similarity", k=4)
             qa = RetrievalQA.from_chain_type(llm=chat, chain_type="stuff", retriever=retriever)
             base_answer = qa.invoke({"query": user_input})["result"]
 
-            # Let the chat model blend the RAG answer with optional web context and chat history
             chain = prompt | chat
             result = chain.invoke({
                 "history": st.session_state.history,
@@ -167,7 +155,6 @@ if user_input:
             })
             answer = result.content
         else:
-            # Normal chat path with optional web context
             chain = prompt | chat
             result = chain.invoke({
                 "history": st.session_state.history,
@@ -179,7 +166,6 @@ if user_input:
     except Exception as e:
         answer = f"⚠️ Error contacting the model: {e}"
 
-    # Save + display assistant turn
     st.session_state.history.append(AIMessage(answer))
     with st.chat_message("assistant", avatar="🤖"):
         st.markdown(answer)
