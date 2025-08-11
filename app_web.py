@@ -1,20 +1,26 @@
+# app_web.py — upgraded to conversational memory
 
 import os
 import streamlit as st
-from langchain_openai import OpenAI
 
-# 🔑 Get API key from environment
-import streamlit as st
-api_key = st.secrets["OPENAI_API_KEY"]
+from langchain_openai import ChatOpenAI
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.messages import HumanMessage, AIMessage
 
-if not api_key:
-    st.error("⚠️ OPENAI_API_KEY not set. Set it before running.")
+# 🔑 Load API key (Cloud first, local fallback)
+API_KEY = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+if not API_KEY:
+    st.error("⚠️ OPENAI_API_KEY not found. Set it in Streamlit Secrets or your .env.")
     st.stop()
 
-# 🤖 Initialize OpenAI LLM
-llm = OpenAI(openai_api_key=api_key, temperature=0.7, model="gpt-3.5-turbo-instruct")
+# 🤖 Chat model (use chat model for memory-aware convos)
+chat = ChatOpenAI(
+    openai_api_key=API_KEY,
+    model="gpt-3.5-turbo",   # or "gpt-4o-mini" if you switch later
+    temperature=0.7,
+)
 
-# 🎨 Custom CSS for better styling
+# 🎨 Custom CSS (kept from your version)
 st.markdown("""
     <style>
         body { background-color: #f9f9f9; }
@@ -25,37 +31,47 @@ st.markdown("""
 
 # 🏷️ App Title
 st.title("💬 Natty's Smart Assistant")
-st.caption("Enhanced UI - LangChain + Streamlit + OpenAI")
+st.caption("Enhanced UI - LangChain + Streamlit + OpenAI (with memory)")
 
-# 🧠 Store chat history
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# 🧠 LangChain-style memory
+if "history" not in st.session_state:
+    st.session_state.history = []  # list of BaseMessage: HumanMessage / AIMessage
 
-# 🖼️ Display chat history
-for msg in st.session_state.messages:
-    avatar = "🧑‍💻" if msg["role"] == "user" else "🤖"
-    with st.chat_message(msg["role"], avatar=avatar):
-        st.markdown(msg["content"])
+# 🧩 Prompt with history placeholder so past turns are included
+prompt = ChatPromptTemplate.from_messages([
+    ("system", "You are a helpful, concise assistant."),
+    MessagesPlaceholder("history"),
+    ("human", "{input}"),
+])
+
+# 🖼️ Display chat history with avatars
+for msg in st.session_state.history:
+    role = "user" if isinstance(msg, HumanMessage) else "assistant"
+    avatar = "🧑‍💻" if role == "user" else "🤖"
+    with st.chat_message(role, avatar=avatar):
+        st.markdown(msg.content)
 
 # ⌨️ User input
 user_input = st.chat_input("Ask me anything...")
 
 if user_input:
-    # Save user message
-    st.session_state.messages.append({"role": "user", "content": user_input})
-
-    # Display user message immediately
+    # show + store user turn
+    st.session_state.history.append(HumanMessage(user_input))
     with st.chat_message("user", avatar="🧑‍💻"):
         st.markdown(user_input)
 
-    # ✅ Generate assistant response (with proper error handling)
+    # generate with full history context
     try:
-        raw_response = llm.invoke(user_input)  # returns an object
-        response = raw_response if isinstance(raw_response, str) else str(raw_response)
+        chain = prompt | chat
+        result = chain.invoke({
+            "history": st.session_state.history,
+            "input": user_input
+        })
+        answer = result.content
     except Exception as e:
-        response = f"⚠️ Sorry, there was an error contacting OpenAI: {str(e)}"
+        answer = f"⚠️ Sorry, there was an error contacting OpenAI: {e}"
 
-    # Save and display assistant response
-    st.session_state.messages.append({"role": "assistant", "content": response})
+    # store + show assistant turn
+    st.session_state.history.append(AIMessage(answer))
     with st.chat_message("assistant", avatar="🤖"):
-        st.markdown(response)
+        st.markdown(answer)
