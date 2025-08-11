@@ -1,4 +1,4 @@
-# app_web.py — chat + conversational memory + PDF upload (RAG) + version label
+# app_web.py — chat + conversational memory + PDF upload (RAG) + live web search + version label
 
 import os
 import tempfile
@@ -18,6 +18,12 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.vectorstores import FAISS
 from langchain.chains import RetrievalQA
 
+# Live web search (Tavily)
+try:
+    from tavily import TavilyClient
+except Exception:
+    TavilyClient = None  # will handle gracefully below
+
 
 # ========= App / Version =========
 # Option A (auto): show current UTC timestamp on each run
@@ -29,18 +35,20 @@ if not API_KEY:
     st.error("⚠️ OPENAI_API_KEY not found. Add it in Streamlit Secrets (cloud) or your .env (local).")
     st.stop()
 
+TAVILY_KEY = st.secrets.get("TAVILY_API_KEY") or os.getenv("TAVILY_API_KEY")
+tavily = TavilyClient(api_key=TAVILY_KEY) if (TAVILY_KEY and TavilyClient) else None
+
 # ========= Model =========
 chat = ChatOpenAI(
     openai_api_key=API_KEY,
-    model="gpt-3.5-turbo",  # fine balance of quality/latency/cost
+    model="gpt-3.5-turbo",  # you can swap to "gpt-4o-mini" later
     temperature=0.7,
 )
 
 # ========= UI Header =========
 st.title("💬 Natty's Smart Assistant")
-st.caption(f"LangChain + Streamlit • memory + docs • Version: {APP_VERSION}")
+st.caption(f"LangChain + Streamlit • memory + docs + live web • Version: {APP_VERSION}")
 
-# (optional) simple styling to keep your look
 st.markdown("""
 <style>
   body { background-color: #f9f9f9; }
@@ -53,11 +61,14 @@ st.markdown("""
 if "history" not in st.session_state:
     st.session_state.history = []  # list[HumanMessage | AIMessage]
 
+# Prompt that can include optional web context
 prompt = ChatPromptTemplate.from_messages([
-    ("system", "You are a helpful, concise assistant. "
-               "If you use information from uploaded documents, say so in plain English."),
+    ("system",
+     "You are a helpful, concise assistant. "
+     "Use the conversation history and any provided web context and/or uploaded docs context to answer. "
+     "If you used web context or uploaded docs, mention it briefly."),
     MessagesPlaceholder("history"),
-    ("human", "{input}")
+    ("human", "{input}\n\n[Optional web context]\n{web_context}")
 ])
 
 # ========= Sidebar: Upload + Index PDFs =========
@@ -84,16 +95,40 @@ def build_index_from_pdfs(files):
 
 # Build/refresh the vector index when new files are uploaded
 if uploaded:
-    # Rebuild only if we don't have one yet OR file list changed in size
     needs_index = ("vs" not in st.session_state) or \
                   ("vs_file_count" not in st.session_state) or \
                   (st.session_state.vs_file_count != len(uploaded))
-
     if needs_index:
         with st.sidebar.status("Indexing PDFs…", expanded=False):
             st.session_state.vs = build_index_from_pdfs(uploaded)
             st.session_state.vs_file_count = len(uploaded)
             st.sidebar.success(f"Indexed {st.session_state.vs_file_count} file(s) ✅")
+
+# ========= Sidebar: Live Web Search =========
+st.sidebar.header("🌐 Live Web")
+live_search = st.sidebar.checkbox("Use live web search for current events", value=False)
+if live_search and not tavily:
+    st.sidebar.warning("Add TAVILY_API_KEY in Secrets to enable live web search.")
+
+def fetch_web_context(query: str, max_results: int = 5) -> str:
+    """Query Tavily and return a short concatenated context block."""
+    if not tavily:
+        return ""
+    try:
+        r = tavily.search(query=query, max_results=max_results)
+        snippets = []
+        for item in r.get("results", []):
+            title = item.get("title", "")
+            snip = item.get("content", "")
+            url = item.get("url", "")
+            if title or snip:
+                snippets.append(f"- {title}\n  {snip}\n  Source: {url}")
+        context = "\n".join(snippets)
+        # keep context bounded so prompts stay compact
+        return context[:6000]
+    except Exception as e:
+        st.sidebar.error(f"Web search failed: {e}")
+        return ""
 
 # ========= Render chat so far =========
 for msg in st.session_state.history:
@@ -112,16 +147,33 @@ if user_input:
         st.markdown(user_input)
 
     try:
+        # optional web context
+        web_context = fetch_web_context(user_input, max_results=5) if live_search else ""
+
         if use_docs and "vs" in st.session_state:
-            # RAG path: retrieve from the uploaded docs
+            # RAG path: retrieve from the uploaded docs first
             retriever = st.session_state.vs.as_retriever(search_type="similarity", k=4)
             qa = RetrievalQA.from_chain_type(llm=chat, chain_type="stuff", retriever=retriever)
-            answer = qa.invoke({"query": user_input})["result"]
-        else:
-            # Plain chat with conversational memory
+            base_answer = qa.invoke({"query": user_input})["result"]
+
+            # Let the chat model blend the RAG answer with optional web context and chat history
             chain = prompt | chat
-            result = chain.invoke({"history": st.session_state.history, "input": user_input})
+            result = chain.invoke({
+                "history": st.session_state.history,
+                "input": f"User asked: {user_input}\nRAG answer (from uploaded docs): {base_answer}",
+                "web_context": web_context
+            })
             answer = result.content
+        else:
+            # Normal chat path with optional web context
+            chain = prompt | chat
+            result = chain.invoke({
+                "history": st.session_state.history,
+                "input": user_input,
+                "web_context": web_context
+            })
+            answer = result.content
+
     except Exception as e:
         answer = f"⚠️ Error contacting the model: {e}"
 
